@@ -1,0 +1,198 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// This is your Prisma schema file
+
+// --- ENUMS FOR SECURITY ---
+
+enum SecurityLevel {
+  PUBLIC
+  INTERNAL
+  CONFIDENTIAL
+}
+
+enum RoleName {
+  STUDENT
+  INSTRUCTOR
+  DEPARTMENT_HEAD
+  HR_MANAGER
+  SYSTEM_ADMIN
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// --- USER & AUTHENTICATION ---
+
+model User {
+  id                String         @id @default(uuid())
+  email             String         @unique
+  passwordHash      String
+  passwordSalt      String         // For rainbow table protection
+  isVerified        Boolean        @default(false)
+  
+  // MAC: Mandatory Access Control
+  clearanceLevel    SecurityLevel  @default(PUBLIC)
+  
+  // Authentication & MFA
+  mfaEnabled        Boolean        @default(false)
+  mfaSecret         String?
+  failedLoginCount  Int            @default(0)
+  lockedUntil       DateTime?
+  
+  // ABAC: Attributes
+  department        String?
+  employmentStatus  String?        // e.g., "Full-time", "Contractor"
+  location          String?
+  
+  // Relations
+  profile           Profile?
+  roles             UserRole[]
+  ownedResources    Resource[]     @relation("ResourceOwner")
+  sharedAccess      ResourceAccess[]
+  roleRequests      RoleChangeRequest[] @relation("Requester")
+  auditLogs         AuditLog[]
+  sessions          Session[]
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+model Profile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id])
+  firstName   String
+  lastName    String
+  phoneNumber String?
+  avatarUrl   String?
+}
+
+// --- RBAC: ROLE-BASED ACCESS CONTROL ---
+
+model Role {
+  id          String     @id @default(uuid())
+  name        RoleName   @unique
+  permissions String[]   // Array of permission strings e.g., ["READ_SALARY", "EDIT_COURSE"]
+  users       UserRole[]
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  user      User     @relation(fields: [userId], references: [id])
+  role      Role     @relation(fields: [roleId], references: [id])
+  assignedAt DateTime @default(now())
+  assignedBy String   // Admin who assigned the role
+}
+
+model RoleChangeRequest {
+  id             String        @id @default(uuid())
+  requesterId    String
+  requester      User          @relation("Requester", fields: [requesterId], references: [id])
+  requestedRole  RoleName
+  status         RequestStatus @default(PENDING)
+  approvedBy     String?
+  reason         String?
+  createdAt      DateTime      @default(now())
+}
+
+// --- LMS RESOURCES & DAC (Discretionary Access Control) ---
+
+model Resource {
+  id                 String           @id @default(uuid())
+  title              String
+  contentUrl         String           // Link to encrypted S3 bucket
+  
+  // MAC: Classification
+  classification     SecurityLevel    @default(INTERNAL)
+  
+  // DAC: Ownership
+  ownerId            String
+  owner              User             @relation("ResourceOwner", fields: [ownerId], references: [id])
+  
+  // Permissions shared with others
+  sharedWith         ResourceAccess[]
+  
+  department         String?          // ABAC: Department-specific resources
+  createdAt          DateTime         @default(now())
+}
+
+model ResourceAccess {
+  id           String   @id @default(uuid())
+  resourceId   String
+  userId       String
+  resource     Resource @relation(fields: [resourceId], references: [id])
+  user         User     @relation(fields: [userId], references: [id])
+  
+  canRead      Boolean  @default(true)
+  canWrite     Boolean  @default(false)
+  canDelete    Boolean  @default(false)
+  
+  grantedBy    String   // DAC: The owner who granted this
+  grantedAt    DateTime @default(now())
+}
+
+// --- RuBAC: RULE-BASED ACCESS CONTROL ---
+
+model AccessPolicy {
+  id             String   @id @default(uuid())
+  name           String
+  description    String
+  startTime      String?  // e.g., "09:00"
+  endTime        String?  // e.g., "17:00"
+  allowedDevices String[] // e.g., ["Workstation", "Mobile"]
+  isActive       Boolean  @default(true)
+}
+
+// --- AUDITING & LOGGING ---
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  timestamp      DateTime @default(now())
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id])
+  action         String   // e.g., "LOGIN_ATTEMPT", "FILE_ACCESS", "ROLE_CHANGE"
+  resourceId     String?
+  ipAddress      String
+  userAgent      String
+  status         String   // "SUCCESS" or "FAILURE"
+  details        Json?    // Specific details about the change
+  
+  // For Log Integrity (Chaining)
+  previousHash   String?  // Hash of the previous log entry
+  logHash        String   // Hash of this current entry (encrypted)
+}
+
+model SystemEvent {
+  id          String   @id @default(uuid())
+  event       String   // "SYSTEM_STARTUP", "CONFIG_CHANGE"
+  timestamp   DateTime @default(now())
+  details     String
+  severity    String   // "INFO", "WARNING", "CRITICAL"
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  token        String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+}
