@@ -27,3 +27,28 @@ export async function createAuditLog(data: {
     }
   });
 }
+
+export async function logAccess(
+  email: string,
+  url: string,
+  status: string
+) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+
+    await createAuditLog({
+      userId: user?.id,
+      action: "RESOURCE_ACCESS",
+      status,
+      resourceId: url,
+      ipAddress: "system", // replace with real IP if available
+    });
+  } catch (error) {
+    console.error("Audit log failed:", error);
+  }
+}
+
+
