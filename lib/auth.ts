@@ -1,12 +1,8 @@
-import NextAuth, {
-  NextAuthOptions,
-} from "next-auth";
+import NextAuth, { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "./prisma";
 import { verifyPassword } from "./password";
 import { createAuditLog } from "./audit";
-
-
 
 // ----- 2. NextAuth options -----
 export const authOptions: NextAuthOptions = {
@@ -114,6 +110,19 @@ export const authOptions: NextAuthOptions = {
         session.user.department = token.department;
       }
       return session;
+    },
+  },
+
+  events: {
+    async signOut({ token }) {
+      if (!token?.id) return;
+
+      await createAuditLog({
+        userId: token.id as string,
+        action: "LOGOUT",
+        status: "SUCCESS",
+        ipAddress: "system",
+      });
     },
   },
 
